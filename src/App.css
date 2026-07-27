@@ -6,6 +6,9 @@
   justify-content: center;
   overflow: hidden;
   padding: 32px;
+  background-color: #f3f4f6;
+  background-image: radial-gradient(circle, rgba(148, 163, 184, 0.34) 1px, transparent 1px);
+  background-size: 18px 18px;
 }
 
 .webgl-canvas {

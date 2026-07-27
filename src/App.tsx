@@ -3,24 +3,28 @@ import * as THREE from 'three'
 import './App.css'
 
 const SQUARE_COUNT = 40
-const SQUARE_SIZE = 0.5
+const SQUARE_SIZE = 0.25
 // Compressed ellipse: narrow in X, deep in Z (matches the top-view sketch).
-const RING_RADIUS_X = 3.75
-const RING_RADIUS_Z = 6.8
-const MAX_ANGLE = Math.PI * 0.52
-const ANGULAR_SPEED = 0.23
-const SPAWN_INTERVAL = 850
+const RING_RADIUS_X = 2.77
+const RING_RADIUS_Z = 3.4
+const MAX_ANGLE = Math.PI
+const ANGULAR_SPEED = 0.225
+const SPAWN_INTERVAL = 800
 // Camera stays where it was — near the ellipse center, looking toward the far arc.
-const CAMERA_Z = RING_RADIUS_Z * 0.2
+const CAMERA_Z = RING_RADIUS_Z * 0.4
+const INTRO_DELAY_MS = 200
 const INTRO_GROW_MS = 300
 const INTRO_HOLD_MS = 1500
 const SCALE_START = 0.1
-const SCALE_HOLD = 1.3
-const SCALE_AT_EDGE = 6
-const CORNER_RADIUS = 0.02
-// Local Z offset at the left/right edges of a square when fully bent.
+const SCALE_HOLD = 1.5
+const SCALE_AT_EDGE = 16
+const CORNER_RADIUS = 0.005// Local Z offset at the left/right edges of a square when fully bent.
 const BEND_AT_EDGE = 0.14
 const BEND_SEGMENTS = 52
+// Spawn each stream one square-width past center in the opposite direction
+// so left/right chains overlap at the middle.
+const SPAWN_ANGLE_OFFSET =
+  (SQUARE_SIZE * 2 * SCALE_HOLD) / RING_RADIUS_X
 
 const imageModules = import.meta.glob('./assets/carousel-images/*.webp', {
   eager: true,
@@ -43,9 +47,14 @@ type BendMaterial = THREE.MeshBasicMaterial & {
 type Square = {
   mesh: THREE.Mesh
   angle: number
+  startAngle: number
   direction: 1 | -1
   active: boolean
   activatedAt: number
+}
+
+function getStartAngle(direction: 1 | -1) {
+  return -direction * SPAWN_ANGLE_OFFSET
 }
 
 function applyCoverCrop(texture: THREE.Texture) {
@@ -96,13 +105,20 @@ function loadTextures(anisotropy: number): Promise<THREE.Texture[]> {
   )
 }
 
-function createBendMaterial(texture: THREE.Texture): BendMaterial {
+function createBendMaterial(
+  texture: THREE.Texture,
+  direction: 1 | -1,
+): BendMaterial {
   const bendUniform: BendUniform = { value: 0 }
+  // Hide the overlapping half: right chain only draws for world x >= 0,
+  // left chain only for world x <= 0 — so each stream appears to start at center.
+  const clipPlane = new THREE.Plane(new THREE.Vector3(direction, 0, 0), 0)
   const material = new THREE.MeshBasicMaterial({
     map: texture,
     color: 0xffffff,
     side: THREE.DoubleSide,
     toneMapped: false,
+    clippingPlanes: [clipPlane],
   }) as BendMaterial
 
   material.userData.bendUniform = bendUniform
@@ -150,25 +166,35 @@ function createBendMaterial(texture: THREE.Texture): BendMaterial {
       )
   }
   // Keep all bent squares on one compiled program variant.
-  material.customProgramCacheKey = () => 'paper-bend-square-textured'
+  material.customProgramCacheKey = () => 'paper-bend-square-textured-clipped'
 
   return material
 }
 
-function getSquareScale(angle: number, ageMs: number) {
-  if (ageMs < INTRO_GROW_MS) {
-    return THREE.MathUtils.lerp(SCALE_START, SCALE_HOLD, ageMs / INTRO_GROW_MS)
+function getSquareScale(angle: number, startAngle: number, ageMs: number) {
+  if (ageMs < INTRO_DELAY_MS) {
+    return SCALE_START
   }
 
-  if (ageMs < INTRO_GROW_MS + INTRO_HOLD_MS) {
+  const growAgeMs = ageMs - INTRO_DELAY_MS
+
+  if (growAgeMs < INTRO_GROW_MS) {
+    return THREE.MathUtils.lerp(SCALE_START, SCALE_HOLD, growAgeMs / INTRO_GROW_MS)
+  }
+
+  if (growAgeMs < INTRO_GROW_MS + INTRO_HOLD_MS) {
     return SCALE_HOLD
   }
 
   // After the intro, grow linearly from hold → edge over the remaining arc.
-  const introAngle = ANGULAR_SPEED * ((INTRO_GROW_MS + INTRO_HOLD_MS) / 1000)
-  const remaining = Math.max(MAX_ANGLE - introAngle, Number.EPSILON)
+  const introAngle =
+    ANGULAR_SPEED *
+    ((INTRO_DELAY_MS + INTRO_GROW_MS + INTRO_HOLD_MS) / 1000)
+  const traveled = Math.abs(angle - startAngle)
+  const totalTravel = MAX_ANGLE + Math.abs(startAngle)
+  const remaining = Math.max(totalTravel - introAngle, Number.EPSILON)
   const progress = THREE.MathUtils.clamp(
-    (Math.abs(angle) - introAngle) / remaining,
+    (traveled - introAngle) / remaining,
     0,
     1,
   )
@@ -176,14 +202,16 @@ function getSquareScale(angle: number, ageMs: number) {
   return THREE.MathUtils.lerp(SCALE_HOLD, SCALE_AT_EDGE, progress)
 }
 
-function getBendAmount(angle: number) {
-  const progress = Math.min(Math.abs(angle) / MAX_ANGLE, 1)
+function getBendAmount(angle: number, startAngle: number) {
+  const traveled = Math.abs(angle - startAngle)
+  const totalTravel = MAX_ANGLE + Math.abs(startAngle)
+  const progress = Math.min(traveled / totalTravel, 1)
   // Ease in so the paper wrap appears mostly near the sides.
   return BEND_AT_EDGE * progress * progress
 }
 
 function placeOnRing(square: Square, ageMs: number) {
-  const { mesh, angle } = square
+  const { mesh, angle, startAngle } = square
 
   mesh.position.set(
     Math.sin(angle) * RING_RADIUS_X,
@@ -192,9 +220,9 @@ function placeOnRing(square: Square, ageMs: number) {
   )
   // Face the ellipse center so we see the inside of the compressed ring.
   mesh.lookAt(0, 0, 0)
-  mesh.scale.setScalar(getSquareScale(angle, ageMs))
+  mesh.scale.setScalar(getSquareScale(angle, startAngle, ageMs))
     ; (mesh.material as BendMaterial).userData.bendUniform.value =
-      getBendAmount(angle)
+      getBendAmount(angle, startAngle)
 }
 
 function createSquare(
@@ -203,15 +231,18 @@ function createSquare(
   textures: THREE.Texture[],
 ): Square {
   const texture = textures[index % textures.length]
-  const material = createBendMaterial(texture)
+  const direction: 1 | -1 = index % 2 === 0 ? 1 : -1
+  const material = createBendMaterial(texture, direction)
   const mesh = new THREE.Mesh(geometry, material)
+  const startAngle = getStartAngle(direction)
 
   mesh.visible = false
 
   const square: Square = {
     mesh,
-    angle: 0,
-    direction: index % 2 === 0 ? 1 : -1,
+    angle: startAngle,
+    startAngle,
+    direction,
     active: false,
     activatedAt: 0,
   }
@@ -261,7 +292,7 @@ function App() {
         renderer = new THREE.WebGLRenderer({
           canvas,
           antialias: true,
-          alpha: false,
+          alpha: true,
           powerPreference: 'high-performance',
         })
       } catch {
@@ -273,8 +304,9 @@ function App() {
         return
       }
 
-      renderer.setClearColor(0x060815, 1)
+      renderer.setClearColor(0x000000, 0)
       renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2))
+      renderer.localClippingEnabled = true
 
       const anisotropy = Math.min(4, renderer.capabilities.getMaxAnisotropy())
 
@@ -323,8 +355,11 @@ function App() {
         }
       }
 
-      let lastSpawnTimeRight = 0
-      let lastSpawnTimeLeft = 0
+      // Stagger left/right so a new square appears in the center while the
+      // previous pair is separating. Without this, both sides spawn together and
+      // the center gap grows to ~2x the side spacing.
+      let lastSpawnTimeRight = -SPAWN_INTERVAL / 2
+      let lastSpawnTimeLeft = -SPAWN_INTERVAL / 2
       let previousTime = performance.now()
 
       const resize = () => {
@@ -348,7 +383,8 @@ function App() {
           const square = queue.shift()!
           square.active = true
           square.mesh.visible = true
-          square.angle = 0
+          square.angle = getStartAngle(square.direction)
+          square.startAngle = square.angle
           square.activatedAt = time
           placeOnRing(square, 0)
           return time
@@ -378,7 +414,8 @@ function App() {
           if (Math.abs(square.angle) > MAX_ANGLE) {
             square.active = false
             square.mesh.visible = false
-            square.angle = 0
+            square.angle = getStartAngle(square.direction)
+            square.startAngle = square.angle
             if (square.direction === 1) {
               rightQueue.push(square)
             } else {
