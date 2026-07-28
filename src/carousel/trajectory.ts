@@ -9,6 +9,7 @@ import {
   RING_PATH_SAMPLES,
   RING_RADIUS_X,
   RING_RADIUS_Z,
+  RING_VISIBLE_FRACTION,
   SCALE_HOLD,
   SCALE_START,
   SQUARE_SIZE,
@@ -20,6 +21,7 @@ export type Trajectory = {
   curve: THREE.CatmullRomCurve3
   growStartProgress: number
   forkProgress: number
+  sideProgress: number
 }
 
 function getRingPoint(angle: number) {
@@ -104,6 +106,8 @@ function createTrajectory(direction: Direction): Trajectory {
     curve,
     growStartProgress: forkProgress * FEEDER_HOLD_FRACTION,
     forkProgress,
+    sideProgress:
+      forkProgress + (1 - forkProgress) * RING_VISIBLE_FRACTION,
   }
 }
 

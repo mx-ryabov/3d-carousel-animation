@@ -4,16 +4,15 @@ import gsap from "gsap";
 import * as THREE from "three";
 import {
   BEND_SEGMENTS,
+  MIN_CAMERA_ZOOM,
   PATH_DURATION_SECONDS,
+  REFERENCE_ASPECT,
   RING_RADIUS_Z,
   SPAWN_INTERVAL,
   SQUARE_COUNT,
   SQUARE_SIZE,
 } from "./constants";
-import {
-  createCarouselControls,
-  createOpeningTimeline,
-} from "./choreography";
+import { createCarouselControls, createOpeningTimeline } from "./choreography";
 import {
   createCarouselSquare,
   getSpeedMultiplier,
@@ -122,7 +121,7 @@ export function useCarouselScene(
       scene.add(cardGroup);
 
       const controls = createCarouselControls();
-      camera.position.set(0, 0.15, controls.cameraZ);
+      camera.position.set(0, 0, controls.cameraZ);
       camera.lookAt(0, 0, -RING_RADIUS_Z);
       cardGroup.scale.setScalar(controls.groupScale);
 
@@ -159,11 +158,18 @@ export function useCarouselScene(
         const { width, height } = canvas.getBoundingClientRect();
         const displayWidth = Math.max(1, Math.floor(width));
         const displayHeight = Math.max(1, Math.floor(height));
+        const aspect = displayWidth / displayHeight;
 
         sceneRenderer.setSize(displayWidth, displayHeight, false);
         sceneRenderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
 
-        camera.aspect = displayWidth / displayHeight;
+        // Zoom out on narrow canvases so horizontal FOV matches the desktop
+        // reference span; never zoom in past 1 so wide screens stay unchanged.
+        camera.aspect = aspect;
+        camera.zoom = Math.max(
+          MIN_CAMERA_ZOOM,
+          Math.min(1, aspect / REFERENCE_ASPECT),
+        );
         camera.updateProjectionMatrix();
       };
 
@@ -229,8 +235,8 @@ export function useCarouselScene(
             animationSpeed *
             getSpeedMultiplier(square.progress, trajectory);
 
-          // Recycle before sampling the curve outside its valid range.
-          if (square.progress >= 1) {
+          // Recycle at the configured visible endpoint of the ring.
+          if (square.progress >= trajectory.sideProgress) {
             square.mesh.visible = false;
             square.progress = 0;
 
