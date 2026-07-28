@@ -1,17 +1,19 @@
 import { useEffect } from "react";
 import type { RefObject } from "react";
+import gsap from "gsap";
 import * as THREE from "three";
 import {
   BEND_SEGMENTS,
-  CAMERA_Z,
-  INTRO_ACCELERATION_DURATION_MS,
-  INTRO_ACCELERATION_SPEED,
   PATH_DURATION_SECONDS,
   RING_RADIUS_Z,
   SPAWN_INTERVAL,
   SQUARE_COUNT,
   SQUARE_SIZE,
 } from "./constants";
+import {
+  createCarouselControls,
+  createOpeningTimeline,
+} from "./choreography";
 import {
   createCarouselSquare,
   getSpeedMultiplier,
@@ -20,12 +22,6 @@ import {
 import type { CarouselSquare } from "./square";
 import { loadCarouselTextures } from "./textures";
 import { getTrajectory } from "./trajectory";
-
-function power3InOut(progress: number) {
-  return progress < 0.5
-    ? 8 * Math.pow(progress, 4)
-    : 1 - Math.pow(-2 * progress + 2, 4) / 2;
-}
 
 export function useCarouselScene(
   canvasRef: RefObject<HTMLCanvasElement | null>,
@@ -42,17 +38,21 @@ export function useCarouselScene(
     let sharedGeometry: THREE.PlaneGeometry | undefined;
     let textures: THREE.Texture[] = [];
     let squares: CarouselSquare[] = [];
-    let frameId: number | undefined;
     let resizeObserver: ResizeObserver | undefined;
+    let openingTimeline: gsap.core.Timeline | undefined;
+    let tickCallback: gsap.TickerCallback | undefined;
 
     const cleanup = () => {
       resizeObserver?.disconnect();
       resizeObserver = undefined;
 
-      if (frameId !== undefined) {
-        window.cancelAnimationFrame(frameId);
-        frameId = undefined;
+      if (tickCallback) {
+        gsap.ticker.remove(tickCallback);
+        tickCallback = undefined;
       }
+
+      openingTimeline?.kill();
+      openingTimeline = undefined;
 
       for (const square of squares) {
         square.mesh.removeFromParent();
@@ -118,8 +118,13 @@ export function useCarouselScene(
 
       const scene = new THREE.Scene();
       const camera = new THREE.PerspectiveCamera(55, 1, 0.1, 100);
-      camera.position.set(0, 0.15, CAMERA_Z);
+      const cardGroup = new THREE.Group();
+      scene.add(cardGroup);
+
+      const controls = createCarouselControls();
+      camera.position.set(0, 0.15, controls.cameraZ);
       camera.lookAt(0, 0, -RING_RADIUS_Z);
+      cardGroup.scale.setScalar(controls.groupScale);
 
       const geometry = new THREE.PlaneGeometry(
         SQUARE_SIZE,
@@ -133,7 +138,7 @@ export function useCarouselScene(
       );
 
       for (const square of squares) {
-        scene.add(square.mesh);
+        cardGroup.add(square.mesh);
       }
 
       // Mirrored queues make each dispatch add one card to both paths.
@@ -149,8 +154,6 @@ export function useCarouselScene(
       }
 
       let spawnElapsed = SPAWN_INTERVAL;
-      let previousTime = performance.now();
-      let animationStartedAt: number | undefined;
 
       const resize = () => {
         const { width, height } = canvas.getBoundingClientRect();
@@ -167,7 +170,7 @@ export function useCarouselScene(
       const activateSquare = (square: CarouselSquare) => {
         square.mesh.visible = true;
         square.progress = 0;
-        placeSquareOnPath(square);
+        placeSquareOnPath(square, undefined, controls.reveal);
       };
 
       const spawnPair = () => {
@@ -187,43 +190,32 @@ export function useCarouselScene(
         return true;
       };
 
-      const render = (time: number) => {
+      const update = (_time: number, deltaTime: number) => {
         if (cancelled) {
           return;
         }
 
-        const delta = Math.min((time - previousTime) / 1000, 0.05);
-        previousTime = time;
+        // GSAP ticker delta is in milliseconds; clamp like the previous RAF loop.
+        const delta = Math.min(deltaTime / 1000, 0.05);
+        const animationSpeed = controls.speed;
 
-        animationStartedAt ??= time;
-        const introTimeProgress = THREE.MathUtils.clamp(
-          (time - animationStartedAt) / INTRO_ACCELERATION_DURATION_MS,
-          0,
-          1,
-        );
-        const introEasedProgress = power3InOut(introTimeProgress);
-        const isAccelerating =
-          time - animationStartedAt <
-          INTRO_ACCELERATION_DURATION_MS;
-        const animationSpeed = isAccelerating
-          ? THREE.MathUtils.lerp(
-              1,
-              INTRO_ACCELERATION_SPEED,
-              introEasedProgress,
-            )
-          : 1;
+        camera.position.z = controls.cameraZ;
+        camera.lookAt(0, 0, -RING_RADIUS_Z);
+        cardGroup.scale.setScalar(controls.groupScale);
 
         // Advance the spawn clock at the same speed as the cards so spacing
         // remains stable while the chain builds outward from the center.
-        spawnElapsed += delta * 1000 * animationSpeed;
+        if (controls.spawnEnabled > 0) {
+          spawnElapsed += delta * 1000 * animationSpeed;
 
-        while (spawnElapsed >= SPAWN_INTERVAL) {
-          if (!spawnPair()) {
-            spawnElapsed = SPAWN_INTERVAL;
-            break;
+          while (spawnElapsed >= SPAWN_INTERVAL) {
+            if (!spawnPair()) {
+              spawnElapsed = SPAWN_INTERVAL;
+              break;
+            }
+
+            spawnElapsed -= SPAWN_INTERVAL;
           }
-
-          spawnElapsed -= SPAWN_INTERVAL;
         }
 
         for (const square of squares) {
@@ -250,17 +242,22 @@ export function useCarouselScene(
             continue;
           }
 
-          placeSquareOnPath(square, trajectory);
+          placeSquareOnPath(square, trajectory, controls.reveal);
         }
 
         sceneRenderer.render(scene, camera);
-        frameId = window.requestAnimationFrame(render);
       };
+
+      openingTimeline = createOpeningTimeline(controls);
+      tickCallback = update;
+      gsap.ticker.add(update);
+      // Keep GSAP from also driving a second lagSmoothing path that fights us.
+      gsap.ticker.lagSmoothing(0);
 
       resizeObserver = new ResizeObserver(resize);
       resizeObserver.observe(canvas);
       resize();
-      frameId = window.requestAnimationFrame(render);
+      openingTimeline.play(0);
     };
 
     void start();

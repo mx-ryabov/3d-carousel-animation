@@ -11,8 +11,16 @@ export const PATH_ARC_LENGTH_DIVISIONS = 640;
 
 export const SPAWN_INTERVAL = 850;
 export const CAMERA_Z = RING_RADIUS_Z * 0.4;
-export const INTRO_ACCELERATION_DURATION_MS = 1000;
-export const INTRO_ACCELERATION_SPEED = 9;
+
+// GSAP opening choreography (seconds).
+export const CHOREO_HOLD_DURATION = 0.15;
+export const CHOREO_BUILD_DURATION = 1.3;
+export const CHOREO_REVEAL_DURATION = 0.5;
+export const CHOREO_PAUSE_DURATION = 0;
+export const CHOREO_SETTLE_DURATION = 0.75;
+export const CHOREO_BUILD_SPEED = 6;
+export const CHOREO_CAMERA_Z_START = CAMERA_Z * 1.35;
+export const CHOREO_GROUP_SCALE_START = 0.82;
 
 export const SCALE_START = 0.1;
 export const SCALE_HOLD = 2;

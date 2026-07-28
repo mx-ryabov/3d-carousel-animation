@@ -83,12 +83,13 @@ export function getSpeedMultiplier(
 export function placeSquareOnPath(
   square: CarouselSquare,
   trajectory = getTrajectory(square.direction),
+  reveal = 1,
 ) {
   const { mesh, progress } = square
 
   trajectory.curve.getPointAt(progress, mesh.position)
   mesh.lookAt(0, 0, 0)
-  mesh.scale.setScalar(getSquareScale(progress, trajectory))
+  mesh.scale.setScalar(getSquareScale(progress, trajectory) * reveal)
   mesh.material.userData.bendUniform.value = getBendAmount(
     progress,
     trajectory,
